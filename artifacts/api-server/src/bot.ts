@@ -1,7 +1,8 @@
-import { Bot, InputFile, InlineKeyboard } from "grammy";
+import { Bot, InputFile, InlineKeyboard, webhookCallback } from "grammy";
+import { type RequestHandler } from "express";
 import { logger } from "./lib/logger";
 
-// @imgly/background-removal-node is loaded dynamically to avoid bundling issues
+// @imgly/background-removal-node loaded dynamically to avoid bundling issues
 type RemoveBackground = (
   image: string | URL | ArrayBuffer | Uint8Array | Blob,
   config?: Record<string, unknown>,
@@ -17,7 +18,7 @@ async function getRemoveBackground(): Promise<RemoveBackground> {
   return removeBackgroundFn;
 }
 
-// ── Messages (HTML parse mode — no special escaping needed) ──────────────────
+// ── Messages ──────────────────────────────────────────────────────────────────
 
 const WELCOME_MESSAGE = `✨ <b>Background Remover Pro</b>
 
@@ -71,7 +72,7 @@ You receive a transparent PNG in seconds — no watermarks, no limits, no cost.
 ──────────────────
 🔒 <b>Privacy:</b> Images are processed on the server and never stored or shared.
 
-🆓 <b>Cost:</b> Completely free — the AI model runs locally with no third-party API calls.`;
+🆓 <b>Cost:</b> Completely free — the AI runs locally with no third-party API calls.`;
 
 const READY_TO_REMOVE_MESSAGE = `🖼️ <b>Ready to remove a background!</b>
 
@@ -97,23 +98,20 @@ function afterResultKeyboard(): InlineKeyboard {
     .text("⚙️ How it works", "how_it_works");
 }
 
-// ── Core removal logic (shared between photo and document handlers) ───────────
+// ── Shared image processing ───────────────────────────────────────────────────
 
-async function processImage(
+async function handleImageUrl(
   fileUrl: string,
   chatId: number,
   processingMsgId: number,
   ctx: {
-    api: {
-      deleteMessage: (chatId: number, messageId: number) => Promise<unknown>;
-    };
-    replyWithDocument: (
-      file: InputFile,
-      opts?: Record<string, unknown>,
-    ) => Promise<unknown>;
-    reply: (text: string, opts?: Record<string, unknown>) => Promise<unknown>;
+    api: { deleteMessage(a: number, b: number): Promise<unknown> };
+    replyWithDocument(
+      f: InputFile,
+      o?: Record<string, unknown>,
+    ): Promise<unknown>;
+    reply(t: string, o?: Record<string, unknown>): Promise<unknown>;
   },
-  token: string,
 ): Promise<void> {
   const removeBackground = await getRemoveBackground();
   const resultBlob = await removeBackground(fileUrl, {
@@ -136,35 +134,19 @@ async function processImage(
   );
 }
 
-// ── Bot setup ─────────────────────────────────────────────────────────────────
+// ── Bot factory ───────────────────────────────────────────────────────────────
 
-export async function startBot(): Promise<void> {
-  const token = process.env["TELEGRAM_BOT_TOKEN"];
-
-  if (!token) {
-    logger.warn("TELEGRAM_BOT_TOKEN not set — Telegram bot will not start");
-    return;
-  }
-
+export function createBot(token: string): Bot {
   const bot = new Bot(token);
 
-  // /start
-  bot.command("start", async (ctx) => {
+  // Commands
+  bot.command(["start", "help"], async (ctx) => {
     await ctx.reply(WELCOME_MESSAGE, {
       parse_mode: "HTML",
       reply_markup: mainKeyboard(),
     });
   });
 
-  // /help
-  bot.command("help", async (ctx) => {
-    await ctx.reply(WELCOME_MESSAGE, {
-      parse_mode: "HTML",
-      reply_markup: mainKeyboard(),
-    });
-  });
-
-  // /tips
   bot.command("tips", async (ctx) => {
     await ctx.reply(TIPS_MESSAGE, {
       parse_mode: "HTML",
@@ -172,8 +154,7 @@ export async function startBot(): Promise<void> {
     });
   });
 
-  // ── Inline button callbacks ────────────────────────────────────────────────
-
+  // Inline button callbacks
   bot.callbackQuery("remove_bg", async (ctx) => {
     await ctx.answerCallbackQuery();
     await ctx.reply(READY_TO_REMOVE_MESSAGE, { parse_mode: "HTML" });
@@ -195,8 +176,7 @@ export async function startBot(): Promise<void> {
     });
   });
 
-  // ── Photo handler ──────────────────────────────────────────────────────────
-
+  // Photo handler
   bot.on("message:photo", async (ctx) => {
     const processingMsg = await ctx.reply(
       "⏳ <b>Processing your image...</b>\n\n<i>The AI is removing the background — hang tight!</i>",
@@ -205,36 +185,33 @@ export async function startBot(): Promise<void> {
     const chatId = ctx.chat.id;
 
     try {
-      const photos = ctx.message.photo;
-      const bestPhoto = photos[photos.length - 1];
-
+      const bestPhoto = ctx.message.photo[ctx.message.photo.length - 1];
       const file = await ctx.api.getFile(bestPhoto.file_id);
       if (!file.file_path) throw new Error("No file_path from Telegram");
 
       const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
       logger.info({ chatId, fileId: bestPhoto.file_id }, "Removing background from photo");
 
-      await processImage(fileUrl, chatId, processingMsg.message_id, ctx as never, token);
+      await handleImageUrl(fileUrl, chatId, processingMsg.message_id, ctx as never);
 
       logger.info({ chatId }, "Background removal successful");
     } catch (err) {
       logger.error({ err, chatId }, "Background removal failed");
       await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
       await ctx.reply(
-        "❌ <b>Something went wrong.</b>\n\nPlease try again with a different photo. For best results, use a clear, well-lit image.\n\nTap 💡 <b>Tips</b> for guidance.",
+        "❌ <b>Something went wrong.</b>\n\nPlease try again with a different photo. Tap 💡 <b>Tips</b> for guidance.",
         { parse_mode: "HTML", reply_markup: mainKeyboard() },
       );
     }
   });
 
-  // ── Document (image file) handler ─────────────────────────────────────────
-
+  // Document (image file) handler
   bot.on("message:document", async (ctx) => {
     const doc = ctx.message.document;
 
     if (!doc.mime_type?.startsWith("image/")) {
       await ctx.reply(
-        "📎 <b>Unsupported file type</b>\n\nPlease send an image file (JPG, PNG, WEBP) or simply send a photo directly.",
+        "📎 <b>Unsupported file type</b>\n\nPlease send an image file (JPG, PNG, WEBP) or send a photo directly.",
         { parse_mode: "HTML", reply_markup: mainKeyboard() },
       );
       return;
@@ -251,23 +228,22 @@ export async function startBot(): Promise<void> {
       if (!file.file_path) throw new Error("No file_path from Telegram");
 
       const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-      logger.info({ chatId, fileId: doc.file_id }, "Removing background from document image");
+      logger.info({ chatId, fileId: doc.file_id }, "Removing background from document");
 
-      await processImage(fileUrl, chatId, processingMsg.message_id, ctx as never, token);
+      await handleImageUrl(fileUrl, chatId, processingMsg.message_id, ctx as never);
 
       logger.info({ chatId }, "Background removal from document successful");
     } catch (err) {
       logger.error({ err, chatId }, "Background removal from document failed");
       await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
       await ctx.reply(
-        "❌ <b>Something went wrong.</b>\n\nPlease try again. Tap 💡 <b>Tips</b> for best-result guidance.",
+        "❌ <b>Something went wrong.</b>\n\nPlease try again. Tap 💡 <b>Tips</b> for guidance.",
         { parse_mode: "HTML", reply_markup: mainKeyboard() },
       );
     }
   });
 
-  // ── Catch-all ─────────────────────────────────────────────────────────────
-
+  // Catch-all
   bot.on("message", async (ctx) => {
     await ctx.reply(
       "📸 <b>Send me a photo to get started!</b>\n\nJust drop any image here and I'll remove the background instantly.",
@@ -275,16 +251,67 @@ export async function startBot(): Promise<void> {
     );
   });
 
-  // ── Error handler ─────────────────────────────────────────────────────────
-
+  // Error handler
   bot.catch((err) => {
     logger.error({ err: err.error, update: err.ctx?.update }, "Telegram bot error");
   });
 
-  // Start polling
+  return bot;
+}
+
+// ── Public API ────────────────────────────────────────────────────────────────
+
+let botInstance: Bot | null = null;
+
+/**
+ * Returns an Express middleware that handles Telegram webhook POSTs.
+ * Call this once and mount the result at /api/telegram-webhook.
+ * The handler sends 200 immediately then processes the update asynchronously
+ * so Telegram never times out waiting for the response.
+ */
+export function createWebhookHandler(token: string): RequestHandler {
+  botInstance = createBot(token);
+  const handler = webhookCallback(botInstance, "express");
+
+  // Fire-and-forget wrapper: respond 200 immediately, process in background.
+  // This is critical for autoscale deployments — long background-removal jobs
+  // must not block the HTTP response or Telegram will retry the update.
+  return (req, res, next) => {
+    res.sendStatus(200);
+    // Pass a fake res to grammy so it doesn't try to write again
+    const fakeRes = {
+      ...res,
+      end: () => {},
+      send: () => fakeRes,
+      sendStatus: () => fakeRes,
+      status: () => fakeRes,
+      json: () => fakeRes,
+    } as unknown as typeof res;
+    handler(req, fakeRes, next);
+  };
+}
+
+/**
+ * Registers the webhook URL with Telegram. Call this after the server is
+ * listening and the public URL is known.
+ */
+export async function registerWebhook(token: string, publicUrl: string): Promise<void> {
+  const webhookUrl = `${publicUrl}/api/telegram-webhook`;
+  await botInstance!.api.setWebhook(webhookUrl);
+  logger.info({ webhookUrl }, "Telegram webhook registered");
+}
+
+/**
+ * Starts the bot in polling mode (development only).
+ */
+export async function startPolling(token: string): Promise<void> {
+  const bot = createBot(token);
+  botInstance = bot;
+  // Make sure no stale webhook is set
+  await bot.api.deleteWebhook();
   void bot.start({
-    onStart(botInfo) {
-      logger.info({ username: botInfo.username }, "Telegram bot started (polling)");
+    onStart(info) {
+      logger.info({ username: info.username }, "Telegram bot started (polling)");
     },
   });
 }

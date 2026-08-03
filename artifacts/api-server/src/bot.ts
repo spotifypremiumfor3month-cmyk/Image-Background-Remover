@@ -17,19 +17,19 @@ async function getRemoveBackground(): Promise<RemoveBackground> {
   return removeBackgroundFn;
 }
 
-const WELCOME_MESSAGE = `👋 Welcome to *Background Remover Bot*!
+const WELCOME_MESSAGE = `👋 Welcome to *Background Remover Bot*\\!
 
-Send me any photo and I'll instantly remove the background — completely free, AI-powered, and professional quality.
+Send me any photo and I'll instantly remove the background — completely free, AI\\-powered, and professional quality\\.
 
 📌 *How to use:*
 • Send a photo directly
 • Or forward an image
 
-The result will be returned as a transparent PNG file, ready to use anywhere.`;
+The result will be returned as a transparent PNG file, ready to use anywhere\\.`;
 
-const PROCESSING_MESSAGE = `⏳ Processing your image...
+const PROCESSING_MESSAGE = `⏳ Processing your image\\.\\.\\.
 
-The AI is removing the background. This usually takes 10–30 seconds on first use (the model needs to load), then much faster afterwards.`;
+The AI is removing the background\\. This usually takes 10–30 seconds on first use \\(the model needs to load\\), then much faster afterwards\\.`;
 
 export async function startBot(): Promise<void> {
   const token = process.env["TELEGRAM_BOT_TOKEN"];
@@ -41,19 +41,16 @@ export async function startBot(): Promise<void> {
 
   const bot = new Bot(token);
 
-  // /start command
-  bot.command("start", async (ctx) => {
-    await ctx.replyWithMarkdown(WELCOME_MESSAGE);
-  });
-
-  // /help command
-  bot.command("help", async (ctx) => {
-    await ctx.replyWithMarkdown(WELCOME_MESSAGE);
+  // /start and /help commands
+  bot.command(["start", "help"], async (ctx) => {
+    await ctx.reply(WELCOME_MESSAGE, { parse_mode: "MarkdownV2" });
   });
 
   // Handle photos
   bot.on("message:photo", async (ctx) => {
-    const processingMsg = await ctx.replyWithMarkdown(PROCESSING_MESSAGE);
+    const processingMsg = await ctx.reply(PROCESSING_MESSAGE, {
+      parse_mode: "MarkdownV2",
+    });
     const chatId = ctx.chat.id;
 
     try {
@@ -86,9 +83,9 @@ export async function startBot(): Promise<void> {
       const resultBuffer = Buffer.from(await resultBlob.arrayBuffer());
 
       // Delete the "processing..." message and send the result
-      await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {
-        // Ignore errors if we can't delete the message
-      });
+      await ctx.api
+        .deleteMessage(chatId, processingMsg.message_id)
+        .catch(() => {});
 
       await ctx.replyWithDocument(
         new InputFile(resultBuffer, "background_removed.png"),
@@ -112,7 +109,7 @@ export async function startBot(): Promise<void> {
     }
   });
 
-  // Handle documents that are images (e.g. high-res photos sent as files)
+  // Handle documents that are images (high-res photos sent as files)
   bot.on("message:document", async (ctx) => {
     const doc = ctx.message.document;
     if (!doc.mime_type?.startsWith("image/")) {
@@ -122,7 +119,9 @@ export async function startBot(): Promise<void> {
       return;
     }
 
-    const processingMsg = await ctx.replyWithMarkdown(PROCESSING_MESSAGE);
+    const processingMsg = await ctx.reply(PROCESSING_MESSAGE, {
+      parse_mode: "MarkdownV2",
+    });
     const chatId = ctx.chat.id;
 
     try {
@@ -132,7 +131,10 @@ export async function startBot(): Promise<void> {
       }
       const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
 
-      logger.info({ chatId, fileId: doc.file_id }, "Removing background from document image");
+      logger.info(
+        { chatId, fileId: doc.file_id },
+        "Removing background from document image",
+      );
 
       const removeBackground = await getRemoveBackground();
       const resultBlob = await removeBackground(fileUrl, {
@@ -145,7 +147,9 @@ export async function startBot(): Promise<void> {
 
       const resultBuffer = Buffer.from(await resultBlob.arrayBuffer());
 
-      await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
+      await ctx.api
+        .deleteMessage(chatId, processingMsg.message_id)
+        .catch(() => {});
 
       await ctx.replyWithDocument(
         new InputFile(resultBuffer, "background_removed.png"),
@@ -159,7 +163,9 @@ export async function startBot(): Promise<void> {
     } catch (err) {
       logger.error({ err, chatId }, "Background removal from document failed");
 
-      await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
+      await ctx.api
+        .deleteMessage(chatId, processingMsg.message_id)
+        .catch(() => {});
 
       await ctx.reply(
         "❌ Sorry, something went wrong while processing your image. Please try again.",
@@ -169,22 +175,27 @@ export async function startBot(): Promise<void> {
 
   // Catch-all for non-image messages
   bot.on("message", async (ctx) => {
-    if (!ctx.message.photo && !ctx.message.document) {
-      await ctx.replyWithMarkdown(
-        "📷 Please send me a photo or image file to remove the background.\n\nUse /help to see instructions.",
-      );
-    }
+    await ctx.reply(
+      "📷 Please send me a photo or image file and I'll remove the background\\!\n\nUse /help to see instructions\\.",
+      { parse_mode: "MarkdownV2" },
+    );
   });
 
   // Error handler
   bot.catch((err) => {
-    logger.error({ err: err.error, ctx: err.ctx?.update }, "Telegram bot error");
+    logger.error(
+      { err: err.error, update: err.ctx?.update },
+      "Telegram bot error",
+    );
   });
 
   // Start polling
   void bot.start({
     onStart(botInfo) {
-      logger.info({ username: botInfo.username }, "Telegram bot started (polling)");
+      logger.info(
+        { username: botInfo.username },
+        "Telegram bot started (polling)",
+      );
     },
   });
 }

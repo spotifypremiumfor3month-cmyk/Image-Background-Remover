@@ -1,36 +1,38 @@
-# [Project name]
+# Background Remover Telegram Bot
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+A Telegram bot that removes image backgrounds for free using on-device AI (no paid APIs). Users send a photo; the bot returns a transparent PNG.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/api-server run dev` — run the API server + Telegram bot (port 8080)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
-- `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
-- `pnpm --filter @workspace/db run push` — push DB schema changes (dev only)
-- Required env: `DATABASE_URL` — Postgres connection string
+- Required env secret: `TELEGRAM_BOT_TOKEN` — from @BotFather on Telegram
 
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
 - API: Express 5
-- DB: PostgreSQL + Drizzle ORM
-- Validation: Zod (`zod/v4`), `drizzle-zod`
-- API codegen: Orval (from OpenAPI spec)
-- Build: esbuild (CJS bundle)
+- Bot framework: grammy v1
+- Background removal: @imgly/background-removal-node (ONNX, free, runs locally)
+- DB: PostgreSQL + Drizzle ORM (provisioned, not currently used)
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/api-server/src/bot.ts` — all Telegram bot logic
+- `artifacts/api-server/src/index.ts` — starts Express server then calls `startBot()`
+- `artifacts/api-server/build.mjs` — esbuild config; grammy + @imgly externalized
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- Bot runs in the same process as Express via long-polling (no webhook needed)
+- `grammy` and `@imgly/background-removal-node` are externalized in esbuild (not bundled) because both rely on relative internal requires / WASM binary loading
+- ONNX models are downloaded from jsDelivr CDN on first use, then cached
+- `model: "medium"` gives a solid quality/speed balance; swap to `"large"` for max quality
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+Users open the bot, send any photo, and receive a transparent PNG with the background cleanly removed — powered by the U2-Net model via @imgly/background-removal-node.
 
 ## User preferences
 
@@ -38,8 +40,6 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
-
-## Pointers
-
-- See the `pnpm-workspace` skill for workspace structure, TypeScript setup, and package details
+- First background removal takes longer (~15–30s) because the ONNX model downloads from CDN; subsequent requests are fast
+- `onnxruntime-node` and `sharp` require native build approval — they are in the `onlyBuiltDependencies` list in `pnpm-workspace.yaml`
+- Never add `grammy` or `@imgly/background-removal-node` to the esbuild bundle; keep them external

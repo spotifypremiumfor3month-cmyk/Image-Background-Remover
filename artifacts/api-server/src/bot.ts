@@ -17,74 +17,123 @@ async function getRemoveBackground(): Promise<RemoveBackground> {
   return removeBackgroundFn;
 }
 
-// ── Messages ─────────────────────────────────────────────────────────────────
+// ── Messages (HTML parse mode — no special escaping needed) ──────────────────
 
-const WELCOME_MESSAGE = `✨ *Background Remover Pro*
+const WELCOME_MESSAGE = `✨ <b>Background Remover Pro</b>
 
-Remove backgrounds from any photo instantly — powered by AI, completely free, and professional quality\\.
+Remove backgrounds from any photo instantly — powered by AI, completely free, and professional quality.
 
-━━━━━━━━━━━━━━━━━━
-📸 *Just send a photo to get started\\!*
-━━━━━━━━━━━━━━━━━━
+──────────────────
+📸 <b>Send a photo to get started!</b>
+──────────────────
 
-The result is returned as a transparent PNG, ready to drop into any design, presentation, or social post\\.`;
+The result is returned as a transparent PNG, ready to use in any design, presentation, or social post.`;
 
-const TIPS_MESSAGE = `💡 *Tips for Best Results*
+const TIPS_MESSAGE = `💡 <b>Tips for Best Results</b>
 
 Follow these guidelines to get the cleanest cut:
 
-*🖼 Image quality*
-• Use clear, sharp, well\\-lit photos
+<b>🖼 Image quality</b>
+• Use clear, sharp, well-lit photos
 • Avoid blurry or pixelated images
 • Higher resolution = cleaner edges
 
-*🎨 Background contrast*
+<b>🎨 Background contrast</b>
 • High contrast between subject and background works best
-• Solid\\-color backgrounds \\(white, grey\\) give perfect results
-• Complex busy backgrounds may need a touch\\-up
+• Solid-color backgrounds (white, grey) give perfect results
+• Complex busy backgrounds may need a touch-up
 
-*🧑 Portraits & people*
+<b>🧑 Portraits &amp; people</b>
 • Works great on people, hair, and fine details
 • Face the camera directly for cleanest results
 
-*🐾 Objects & products*
+<b>🐾 Objects &amp; products</b>
 • Products on flat surfaces work very well
 • Keep the subject centred in the frame
 
-*📤 Sending photos*
-• Send as a *photo* for regular quality
-• Send as a *file / document* to preserve full resolution
+<b>📤 Sending photos</b>
+• Send as a <b>photo</b> for standard quality
+• Send as a <b>file / document</b> to preserve full resolution
 
-_Tip: The first request may take 20–30 seconds while the AI model loads\\. All requests after that are much faster\\._`;
+<i>⏱ First request may take 20–30 seconds while the AI model loads. All requests after that are much faster.</i>`;
 
-const HOW_IT_WORKS_MESSAGE = `⚙️ *How It Works*
+const HOW_IT_WORKS_MESSAGE = `⚙️ <b>How It Works</b>
 
-*Step 1 — Send a photo*
-Just drop any image into the chat\\.
+<b>Step 1 — Send a photo</b>
+Drop any image into the chat.
 
-*Step 2 — AI processing*
-The bot runs an on\\-device AI model \\(U2\\-Net\\) to detect the subject and cleanly separate it from the background\\.
+<b>Step 2 — AI processing</b>
+The bot runs an on-device AI model (U2-Net) to precisely detect the subject and cleanly separate it from the background.
 
-*Step 3 — Get your PNG*
-You receive a transparent PNG file in seconds — no watermarks, no limits, no cost\\.
+<b>Step 3 — Get your PNG</b>
+You receive a transparent PNG in seconds — no watermarks, no limits, no cost.
 
-━━━━━━━━━━━━━━━━━━
-🔒 *Privacy*: Images are processed on the server and never stored or shared\\.
+──────────────────
+🔒 <b>Privacy:</b> Images are processed on the server and never stored or shared.
 
-🆓 *Cost*: Completely free — the AI model runs locally with no third\\-party API calls\\.`;
+🆓 <b>Cost:</b> Completely free — the AI model runs locally with no third-party API calls.`;
+
+const READY_TO_REMOVE_MESSAGE = `🖼️ <b>Ready to remove a background!</b>
+
+Send me your photo now and I'll process it instantly.
+
+<i>You can send it as a photo or as a file for full resolution.</i>`;
 
 // ── Keyboards ─────────────────────────────────────────────────────────────────
 
 function mainKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
+    .text("🖼️ Remove Background", "remove_bg")
+    .row()
     .text("💡 Tips for best results", "tips")
     .text("⚙️ How it works", "how_it_works");
 }
 
 function afterResultKeyboard(): InlineKeyboard {
   return new InlineKeyboard()
+    .text("🖼️ Remove Another", "remove_bg")
+    .row()
     .text("💡 Tips", "tips")
     .text("⚙️ How it works", "how_it_works");
+}
+
+// ── Core removal logic (shared between photo and document handlers) ───────────
+
+async function processImage(
+  fileUrl: string,
+  chatId: number,
+  processingMsgId: number,
+  ctx: {
+    api: {
+      deleteMessage: (chatId: number, messageId: number) => Promise<unknown>;
+    };
+    replyWithDocument: (
+      file: InputFile,
+      opts?: Record<string, unknown>,
+    ) => Promise<unknown>;
+    reply: (text: string, opts?: Record<string, unknown>) => Promise<unknown>;
+  },
+  token: string,
+): Promise<void> {
+  const removeBackground = await getRemoveBackground();
+  const resultBlob = await removeBackground(fileUrl, {
+    model: "medium",
+    output: { format: "image/png", quality: 1.0 },
+  });
+
+  const resultBuffer = Buffer.from(await resultBlob.arrayBuffer());
+
+  await ctx.api.deleteMessage(chatId, processingMsgId).catch(() => {});
+
+  await ctx.replyWithDocument(
+    new InputFile(resultBuffer, "background_removed.png"),
+    {
+      caption:
+        "✅ <b>Done!</b> Your transparent PNG is ready.\n\n<i>Send another photo anytime to remove its background.</i>",
+      parse_mode: "HTML",
+      reply_markup: afterResultKeyboard(),
+    },
+  );
 }
 
 // ── Bot setup ─────────────────────────────────────────────────────────────────
@@ -102,7 +151,7 @@ export async function startBot(): Promise<void> {
   // /start
   bot.command("start", async (ctx) => {
     await ctx.reply(WELCOME_MESSAGE, {
-      parse_mode: "MarkdownV2",
+      parse_mode: "HTML",
       reply_markup: mainKeyboard(),
     });
   });
@@ -110,34 +159,48 @@ export async function startBot(): Promise<void> {
   // /help
   bot.command("help", async (ctx) => {
     await ctx.reply(WELCOME_MESSAGE, {
-      parse_mode: "MarkdownV2",
+      parse_mode: "HTML",
       reply_markup: mainKeyboard(),
     });
   });
 
   // /tips
   bot.command("tips", async (ctx) => {
-    await ctx.reply(TIPS_MESSAGE, { parse_mode: "MarkdownV2" });
+    await ctx.reply(TIPS_MESSAGE, {
+      parse_mode: "HTML",
+      reply_markup: mainKeyboard(),
+    });
   });
 
-  // Inline button — Tips
+  // ── Inline button callbacks ────────────────────────────────────────────────
+
+  bot.callbackQuery("remove_bg", async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await ctx.reply(READY_TO_REMOVE_MESSAGE, { parse_mode: "HTML" });
+  });
+
   bot.callbackQuery("tips", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(TIPS_MESSAGE, { parse_mode: "MarkdownV2" });
+    await ctx.reply(TIPS_MESSAGE, {
+      parse_mode: "HTML",
+      reply_markup: mainKeyboard(),
+    });
   });
 
-  // Inline button — How it works
   bot.callbackQuery("how_it_works", async (ctx) => {
     await ctx.answerCallbackQuery();
-    await ctx.reply(HOW_IT_WORKS_MESSAGE, { parse_mode: "MarkdownV2" });
+    await ctx.reply(HOW_IT_WORKS_MESSAGE, {
+      parse_mode: "HTML",
+      reply_markup: mainKeyboard(),
+    });
   });
 
   // ── Photo handler ──────────────────────────────────────────────────────────
 
   bot.on("message:photo", async (ctx) => {
     const processingMsg = await ctx.reply(
-      "⏳ *Processing your image\\.\\.\\.*\n\n_The AI is removing the background — hang tight\\!_",
-      { parse_mode: "MarkdownV2" },
+      "⏳ <b>Processing your image...</b>\n\n<i>The AI is removing the background — hang tight!</i>",
+      { parse_mode: "HTML" },
     );
     const chatId = ctx.chat.id;
 
@@ -149,39 +212,17 @@ export async function startBot(): Promise<void> {
       if (!file.file_path) throw new Error("No file_path from Telegram");
 
       const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-
       logger.info({ chatId, fileId: bestPhoto.file_id }, "Removing background from photo");
 
-      const removeBackground = await getRemoveBackground();
-      const resultBlob = await removeBackground(fileUrl, {
-        model: "medium",
-        output: { format: "image/png", quality: 1.0 },
-      });
-
-      const resultBuffer = Buffer.from(await resultBlob.arrayBuffer());
-
-      await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
-
-      await ctx.replyWithDocument(
-        new InputFile(resultBuffer, "background_removed.png"),
-        {
-          caption:
-            "✅ *Done\\!* Your transparent PNG is ready\\.\n\n_Send another photo anytime to remove its background\\._",
-          parse_mode: "MarkdownV2",
-          reply_markup: afterResultKeyboard(),
-        },
-      );
+      await processImage(fileUrl, chatId, processingMsg.message_id, ctx as never, token);
 
       logger.info({ chatId }, "Background removal successful");
     } catch (err) {
       logger.error({ err, chatId }, "Background removal failed");
       await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
       await ctx.reply(
-        "❌ *Something went wrong\\.*\n\nPlease try again with a different photo\\. For best results, use a clear, well\\-lit image\\.\n\nTap 💡 *Tips* for guidance\\.",
-        {
-          parse_mode: "MarkdownV2",
-          reply_markup: mainKeyboard(),
-        },
+        "❌ <b>Something went wrong.</b>\n\nPlease try again with a different photo. For best results, use a clear, well-lit image.\n\nTap 💡 <b>Tips</b> for guidance.",
+        { parse_mode: "HTML", reply_markup: mainKeyboard() },
       );
     }
   });
@@ -193,18 +234,15 @@ export async function startBot(): Promise<void> {
 
     if (!doc.mime_type?.startsWith("image/")) {
       await ctx.reply(
-        "📎 *Unsupported file type*\n\nPlease send an image file \\(JPG, PNG, WEBP\\) or simply send a photo directly\\.",
-        {
-          parse_mode: "MarkdownV2",
-          reply_markup: mainKeyboard(),
-        },
+        "📎 <b>Unsupported file type</b>\n\nPlease send an image file (JPG, PNG, WEBP) or simply send a photo directly.",
+        { parse_mode: "HTML", reply_markup: mainKeyboard() },
       );
       return;
     }
 
     const processingMsg = await ctx.reply(
-      "⏳ *Processing your image\\.\\.\\.*\n\n_The AI is removing the background — hang tight\\!_",
-      { parse_mode: "MarkdownV2" },
+      "⏳ <b>Processing your image...</b>\n\n<i>The AI is removing the background — hang tight!</i>",
+      { parse_mode: "HTML" },
     );
     const chatId = ctx.chat.id;
 
@@ -213,39 +251,17 @@ export async function startBot(): Promise<void> {
       if (!file.file_path) throw new Error("No file_path from Telegram");
 
       const fileUrl = `https://api.telegram.org/file/bot${token}/${file.file_path}`;
-
       logger.info({ chatId, fileId: doc.file_id }, "Removing background from document image");
 
-      const removeBackground = await getRemoveBackground();
-      const resultBlob = await removeBackground(fileUrl, {
-        model: "medium",
-        output: { format: "image/png", quality: 1.0 },
-      });
-
-      const resultBuffer = Buffer.from(await resultBlob.arrayBuffer());
-
-      await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
-
-      await ctx.replyWithDocument(
-        new InputFile(resultBuffer, "background_removed.png"),
-        {
-          caption:
-            "✅ *Done\\!* Your transparent PNG is ready\\.\n\n_Send another photo anytime to remove its background\\._",
-          parse_mode: "MarkdownV2",
-          reply_markup: afterResultKeyboard(),
-        },
-      );
+      await processImage(fileUrl, chatId, processingMsg.message_id, ctx as never, token);
 
       logger.info({ chatId }, "Background removal from document successful");
     } catch (err) {
       logger.error({ err, chatId }, "Background removal from document failed");
       await ctx.api.deleteMessage(chatId, processingMsg.message_id).catch(() => {});
       await ctx.reply(
-        "❌ *Something went wrong\\.*\n\nPlease try again\\. Tap 💡 *Tips* for best\\-result guidance\\.",
-        {
-          parse_mode: "MarkdownV2",
-          reply_markup: mainKeyboard(),
-        },
+        "❌ <b>Something went wrong.</b>\n\nPlease try again. Tap 💡 <b>Tips</b> for best-result guidance.",
+        { parse_mode: "HTML", reply_markup: mainKeyboard() },
       );
     }
   });
@@ -254,21 +270,15 @@ export async function startBot(): Promise<void> {
 
   bot.on("message", async (ctx) => {
     await ctx.reply(
-      "📸 *Send me a photo to get started\\!*\n\nJust drop any image here and I'll remove the background instantly\\.",
-      {
-        parse_mode: "MarkdownV2",
-        reply_markup: mainKeyboard(),
-      },
+      "📸 <b>Send me a photo to get started!</b>\n\nJust drop any image here and I'll remove the background instantly.",
+      { parse_mode: "HTML", reply_markup: mainKeyboard() },
     );
   });
 
   // ── Error handler ─────────────────────────────────────────────────────────
 
   bot.catch((err) => {
-    logger.error(
-      { err: err.error, update: err.ctx?.update },
-      "Telegram bot error",
-    );
+    logger.error({ err: err.error, update: err.ctx?.update }, "Telegram bot error");
   });
 
   // Start polling
